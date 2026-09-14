@@ -1,0 +1,167 @@
+name: Build My7Net VPN APK (Official Base + Custom)
+
+on:
+  workflow_dispatch:
+    inputs:
+      v2rayng_version:
+        description: 'v2rayNG Version'
+        required: false
+        default: '2.2.6'
+        type: string
+      config_url:
+        description: 'Server Config JSON URL'
+        required: false
+        default: 'https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-my7net:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository with Submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+        fetch-depth: 0
+
+    - name: Update and Init Git Submodules Manually
+      run: |
+        git submodule sync
+        git submodule update --init --recursive
+        git submodule status
+
+    - name: Clone Official v2rayNG (100% Working Base)
+      run: |
+        VERSION="${{ inputs.v2rayng_version }}"
+        if [ -z "$VERSION" ]; then VERSION="2.2.6"; fi
+        rm -rf official-v2rayNG
+        git clone https://github.com/2dust/v2rayNG.git official-v2rayNG --depth 1
+        cd official-v2rayNG
+        git fetch --depth 1 origin tag $VERSION 2>/dev/null || true
+        git checkout $VERSION 2>/dev/null || true
+        ROOT_DIR=$(find . -name "gradlew" -type f | head -n 1 | xargs dirname)
+        echo "ROOT_DIR=$ROOT_DIR" >> $GITHUB_ENV
+
+    - name: Fix Submodules
+      run: |
+        cd official-v2rayNG
+        ROOT_DIR="${{ env.ROOT_DIR }}"
+        cd "$ROOT_DIR"
+        if [ ! -f AndroidLibXrayLite/build.gradle.kts ]; then
+          rm -rf AndroidLibXrayLite
+          git clone https://github.com/2dust/AndroidLibXrayLite.git AndroidLibXrayLite --depth 1 --recursive
+        fi
+        if [ ! -d hev-socks5-tunnel/src ]; then
+          rm -rf hev-socks5-tunnel
+          git clone https://github.com/heiher/hev-socks5-tunnel.git hev-socks5-tunnel --depth 1 --recursive
+        fi
+
+    - name: Apply My7Net Customizations
+      run: |
+        cd official-v2rayNG
+        ROOT_DIR="${{ env.ROOT_DIR }}"
+        cd "$ROOT_DIR"
+        GRADLE_FILE=$(find . -name "build.gradle.kts" -path "*/app/*" | head -n 1)
+        [ -f "$GRADLE_FILE" ] && sed -i 's/applicationId = "com.v2ray.ang"/applicationId = "com.my7net.vpn"/g' "$GRADLE_FILE" || true
+        find . -name "strings.xml" | while read f; do grep -q "app_name" "$f" && sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">My7Net VPN<\/string>/g' "$f" || true; done
+
+    - name: Apply 7net Theme & Auto-Update
+      run: |
+        cd official-v2rayNG
+        ROOT_DIR="${{ env.ROOT_DIR }}"
+        cd "$ROOT_DIR"
+        CONFIG_URL="${{ inputs.config_url }}"
+        PATCHES_DIR="$GITHUB_WORKSPACE/my7net-patches/official"
+        if [ ! -d "$PATCHES_DIR" ]; then PATCHES_DIR="../../my7net-patches/official"; fi
+        if [ ! -d "$PATCHES_DIR" ]; then PATCHES_DIR="$GITHUB_WORKSPACE/easyvpn-patches"; fi
+        mkdir -p app/src/main/res/values
+        cat > app/src/main/res/values/my7net_colors.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <color name="my7net_background">#0A0E1A</color>
+            <color name="my7net_surface">#12182B</color>
+            <color name="my7net_accent">#3B82F6</color>
+            <color name="my7net_connect">#2563EB</color>
+        </resources>
+        EOF
+        mkdir -p app/src/main/res/drawable
+        cat > app/src/main/res/drawable/my7net_circle_outer.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#1A2563EB" /><stroke android:width="2dp" android:color="#332563EB" /></shape>
+        EOF
+        cat > app/src/main/res/drawable/my7net_circle_middle.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#332563EB" /><stroke android:width="1dp" android:color="#4D3B82F6" /></shape>
+        EOF
+        # Copy auto-update manager
+        if [ -f "$PATCHES_DIR/My7NetAutoUpdateManager.kt" ]; then
+          cp "$PATCHES_DIR/My7NetAutoUpdateManager.kt" app/src/main/java/com/v2ray/ang/util/ || true
+        elif [ -f "$GITHUB_WORKSPACE/easyvpn-patches/EasyVpnAutoUpdateManager.kt" ]; then
+          cp "$GITHUB_WORKSPACE/easyvpn-patches/EasyVpnAutoUpdateManager.kt" app/src/main/java/com/v2ray/ang/util/My7NetAutoUpdateManager.kt || true
+        fi
+        [ -f app/src/main/java/com/v2ray/ang/util/My7NetAutoUpdateManager.kt ] && sed -i "s|https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json|$CONFIG_URL|g" app/src/main/java/com/v2ray/ang/util/My7NetAutoUpdateManager.kt || true
+        MAIN_ACTIVITY=$(find . -name "MainActivity.kt" | head -n 1)
+        if [ -f "$MAIN_ACTIVITY" ]; then
+          if ! grep -q "My7NetAutoUpdateManager" "$MAIN_ACTIVITY"; then sed -i '/import com.v2ray.ang.util.Utils/a import com.v2ray.ang.util.My7NetAutoUpdateManager' "$MAIN_ACTIVITY" || true; fi
+          if ! grep -q "autoUpdateOnAppStart" "$MAIN_ACTIVITY"; then sed -i '/setContentView(binding.root)/a \        My7NetAutoUpdateManager.autoUpdateOnAppStart(this)' "$MAIN_ACTIVITY" || sed -i '/mainViewModel.onAction(MainAction.Initialize)/a \        My7NetAutoUpdateManager.autoUpdateOnAppStart(this)' "$MAIN_ACTIVITY" || true; fi
+        fi
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;29.0.14206865"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+
+    - name: Build libhevtun
+      run: |
+        cd official-v2rayNG
+        ROOT_DIR="${{ env.ROOT_DIR }}"
+        cd "$ROOT_DIR"
+        if [ -f compile-hevtun.sh ]; then bash compile-hevtun.sh || true; mkdir -p app/libs/; cp -r libs/* app/libs/ 2>/dev/null || true; fi
+
+    - name: Download libv2ray
+      run: |
+        cd official-v2rayNG
+        ROOT_DIR="${{ env.ROOT_DIR }}"
+        cd "$ROOT_DIR"
+        TAG=$(cd AndroidLibXrayLite && git describe --tags --abbrev=0 2>/dev/null || echo "v25.11.2")
+        mkdir -p app/libs/
+        curl -L -o app/libs/libv2ray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/$TAG/libv2ray.aar" || curl -L -o app/libs/libv2ray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/v25.11.2/libv2ray.aar"
+
+    - name: Setup Java 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Build My7Net VPN APK
+      run: |
+        cd official-v2rayNG
+        ROOT_DIR="${{ env.ROOT_DIR }}"
+        cd "$ROOT_DIR"
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod +x gradlew
+        ./gradlew assembleFdroidDebug --stacktrace
+
+    - name: Prepare APKs
+      if: always()
+      run: |
+        find official-v2rayNG -name "*.apk" -type f | head -n 10
+        mkdir -p artifacts
+        find official-v2rayNG -name "*.apk" -type f -exec cp {} artifacts/ \; || true
+        ls -lh artifacts/
+
+    - name: Upload APKs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: My7Net-VPN-APKs
+        path: artifacts/
+        if-no-files-found: error

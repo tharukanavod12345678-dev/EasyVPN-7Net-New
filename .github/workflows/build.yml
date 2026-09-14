@@ -1,0 +1,278 @@
+name: Build Easy VPN APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'App Name (Easy VPN or My7Net VPN)'
+        required: false
+        default: 'Easy VPN'
+        type: string
+      package_name:
+        description: 'Package Name (com.easy.vpn or com.my7net.vpn)'
+        required: false
+        default: 'com.easy.vpn'
+        type: string
+      config_url:
+        description: 'Server Config JSON URL for Auto-Update'
+        required: false
+        default: 'https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    # User requested submodule commands at beginning
+    - name: Checkout Repository with Submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+        fetch-depth: 0
+
+    - name: Update and Init Git Submodules Manually
+      run: |
+        echo "=== Syncing and updating submodules ==="
+        git submodule sync
+        git submodule update --init --recursive
+        echo "=== Submodules status ==="
+        git submodule status
+        echo "=== Checking AndroidLibXrayLite ==="
+        ls -la AndroidLibXrayLite/ | head -n 20
+        echo "=== Checking hev-socks5-tunnel ==="
+        ls -la hev-socks5-tunnel/ | head -n 20
+        ls -la hev-socks5-tunnel/third-part/ 2>&1 | head -n 10 || echo "No third-part, will init"
+
+    - name: Fix Submodules (Ensure Clean)
+      run: |
+        # Ensure submodules are properly initialized even if previous step partially failed
+        if [ ! -f AndroidLibXrayLite/build.gradle.kts ] && [ ! -f AndroidLibXrayLite/build.gradle ]; then
+          echo "AndroidLibXrayLite missing, cloning..."
+          rm -rf AndroidLibXrayLite
+          git clone https://github.com/2dust/AndroidLibXrayLite.git AndroidLibXrayLite --depth 1 --recursive
+        fi
+        if [ ! -d hev-socks5-tunnel/src ]; then
+          echo "hev-socks5-tunnel missing, cloning..."
+          rm -rf hev-socks5-tunnel
+          git clone https://github.com/heiher/hev-socks5-tunnel.git hev-socks5-tunnel --depth 1 --recursive
+          cd hev-socks5-tunnel && git submodule update --init --recursive || true; cd ..
+        else
+          cd hev-socks5-tunnel && git submodule update --init --recursive || true; cd ..
+        fi
+        echo "=== Submodules fixed ==="
+        ls -la AndroidLibXrayLite/ | head -n 10
+        ls -la hev-socks5-tunnel/ | head -n 10
+
+    - name: Apply Easy VPN Rebranding
+      run: |
+        APP_NAME="${{ inputs.app_name }}"
+        PACKAGE_NAME="${{ inputs.package_name }}"
+        CONFIG_URL="${{ inputs.config_url }}"
+        if [ -z "$APP_NAME" ]; then APP_NAME="Easy VPN"; fi
+        if [ -z "$PACKAGE_NAME" ]; then PACKAGE_NAME="com.easy.vpn"; fi
+        if [ -z "$CONFIG_URL" ]; then CONFIG_URL="https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json"; fi
+        
+        echo "=== Rebranding ==="
+        echo "App Name: $APP_NAME"
+        echo "Package: $PACKAGE_NAME"
+        echo "Config URL: $CONFIG_URL"
+        
+        # Find gradle file
+        GRADLE_FILE="V2rayNG/app/build.gradle.kts"
+        if [ ! -f "$GRADLE_FILE" ]; then GRADLE_FILE="app/build.gradle.kts"; fi
+        echo "Gradle file: $GRADLE_FILE"
+        
+        if [ -f "$GRADLE_FILE" ]; then
+          echo "Before:"
+          grep -n "applicationId\|namespace" "$GRADLE_FILE" | head -n 10
+          # Only change applicationId, keep namespace for BuildConfig/R stability
+          sed -i "s/applicationId = \"com.v2ray.ang\"/applicationId = \"$PACKAGE_NAME\"/g" "$GRADLE_FILE" || true
+          sed -i "s/applicationId = \"com.easy.vpn\"/applicationId = \"$PACKAGE_NAME\"/g" "$GRADLE_FILE" || true
+          sed -i "s/applicationId = \"com.my7net.vpn\"/applicationId = \"$PACKAGE_NAME\"/g" "$GRADLE_FILE" || true
+          echo "After:"
+          grep -n "applicationId\|namespace" "$GRADLE_FILE" | head -n 10
+        fi
+        
+        # Change app_name in all strings.xml
+        find . -name "strings.xml" | while read f; do
+          if grep -q "app_name" "$f"; then
+            sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" "$f" || true
+            echo "Patched $f"
+          fi
+        done
+
+    - name: Apply 7net Dark Theme & UI
+      run: |
+        echo "=== Applying 7net Dark Theme #0A0E1A ==="
+        # Colors already in MainScreen_7net.kt
+        # Check if MainScreen_7net.kt exists in repo
+        if [ -f "easyvpn-patches/MainScreen_7net.kt" ]; then
+          echo "Applying 7net MainScreen from easyvpn-patches"
+          cp easyvpn-patches/MainScreen_7net.kt V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainScreen.kt && echo "Applied" || echo "Failed"
+        else
+          echo "easyvpn-patches not found, creating 7net theme inline"
+          # Create dark theme colors file
+          mkdir -p V2rayNG/app/src/main/res/values
+          cat > V2rayNG/app/src/main/res/values/easyvpn_colors.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <resources>
+            <color name="easyvpn_background">#0A0E1A</color>
+            <color name="easyvpn_surface">#12182B</color>
+            <color name="easyvpn_primary">#1E3A8A</color>
+            <color name="easyvpn_accent">#3B82F6</color>
+            <color name="easyvpn_connect">#2563EB</color>
+            <color name="easyvpn_connected">#10B981</color>
+        </resources>
+        EOF
+        fi
+        
+        # Create circle drawables for middle button
+        mkdir -p V2rayNG/app/src/main/res/drawable
+        cat > V2rayNG/app/src/main/res/drawable/easyvpn_circle_outer.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+            <solid android:color="#1A2563EB" />
+            <stroke android:width="2dp" android:color="#332563EB" />
+        </shape>
+        EOF
+        cat > V2rayNG/app/src/main/res/drawable/easyvpn_circle_middle.xml << 'EOF'
+        <?xml version="1.0" encoding="utf-8"?>
+        <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+            <solid android:color="#332563EB" />
+            <stroke android:width="1dp" android:color="#4D3B82F6" />
+        </shape>
+        EOF
+        echo "Created circle drawables"
+
+    - name: Apply Auto-Update Mechanism
+      run: |
+        CONFIG_URL="${{ inputs.config_url }}"
+        if [ -z "$CONFIG_URL" ]; then CONFIG_URL="https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json"; fi
+        echo "Config URL: $CONFIG_URL"
+        
+        # Copy auto-update managers
+        if [ -f "easyvpn-patches/EasyVpnAutoUpdateManager.kt" ]; then
+          cp easyvpn-patches/EasyVpnAutoUpdateManager.kt V2rayNG/app/src/main/java/com/v2ray/ang/util/EasyVpnAutoUpdateManager.kt && echo "Copied EasyVpnAutoUpdateManager"
+          sed -i "s|https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json|$CONFIG_URL|g" V2rayNG/app/src/main/java/com/v2ray/ang/util/EasyVpnAutoUpdateManager.kt || true
+        fi
+        
+        if [ -f "my7net-patches/official/My7NetAutoUpdateManager.kt" ]; then
+          cp my7net-patches/official/My7NetAutoUpdateManager.kt V2rayNG/app/src/main/java/com/v2ray/ang/util/My7NetAutoUpdateManager.kt && echo "Copied My7NetAutoUpdateManager" || true
+          sed -i "s|https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json|$CONFIG_URL|g" V2rayNG/app/src/main/java/com/v2ray/ang/util/My7NetAutoUpdateManager.kt || true
+        fi
+        
+        # Patch MainActivity to call auto-update
+        MAIN_ACTIVITY="V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt"
+        if [ -f "$MAIN_ACTIVITY" ]; then
+          if ! grep -q "EasyVpnAutoUpdateManager" "$MAIN_ACTIVITY"; then
+            sed -i '/import com.v2ray.ang.util.Utils/a import com.v2ray.ang.util.EasyVpnAutoUpdateManager' "$MAIN_ACTIVITY" || true
+            echo "Added import"
+          fi
+          if ! grep -q "autoUpdateOnAppStart" "$MAIN_ACTIVITY"; then
+            sed -i '/mainViewModel.onAction(MainAction.Initialize)/a \        // Easy VPN - Auto-update configs on app start\n        EasyVpnAutoUpdateManager.autoUpdateOnAppStart(this)' "$MAIN_ACTIVITY" || true
+            echo "Added auto-update call"
+          fi
+          grep -n "EasyVpn\|autoUpdate" "$MAIN_ACTIVITY" | head -n 10
+        fi
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '14742923'
+        packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;29.0.14206865"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+
+    - name: Build libhevtun (VPN Core)
+      run: |
+        echo "=== Building hev-socks5-tunnel (libhevtun) ==="
+        ROOT_DIR="V2rayNG"
+        if [ ! -d "$ROOT_DIR" ]; then ROOT_DIR="."; fi
+        cd "$ROOT_DIR"
+        if [ -f compile-hevtun.sh ]; then
+          bash compile-hevtun.sh || echo "libhevtun build warning"
+          mkdir -p app/libs/
+          cp -r libs/* app/libs/ 2>/dev/null || true
+          ls -lh app/libs/ | head -n 20
+        else
+          echo "No compile-hevtun.sh"
+          find . -name "compile-hevtun.sh" | head -n 5
+        fi
+
+    - name: Fetch Xray Core Tag
+      run: |
+        cd V2rayNG
+        if [ -d AndroidLibXrayLite ]; then
+          pushd AndroidLibXrayLite
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v25.11.2")
+          echo "CURRENT_TAG=$TAG" >> $GITHUB_ENV
+          echo "Tag: $TAG"
+          popd
+        else
+          echo "CURRENT_TAG=v25.11.2" >> $GITHUB_ENV
+        fi
+
+    - name: Download libv2ray.aar (Core Library)
+      run: |
+        TAG="${{ env.CURRENT_TAG }}"
+        if [ -z "$TAG" ]; then TAG="v25.11.2"; fi
+        echo "Downloading libv2ray.aar tag $TAG"
+        mkdir -p V2rayNG/app/libs/
+        curl -L -o V2rayNG/app/libs/libv2ray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/$TAG/libv2ray.aar" || echo "curl failed, trying alternative"
+        ls -lh V2rayNG/app/libs/ || true
+
+    - name: Setup Java 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Build Easy VPN Debug APK
+      run: |
+        cd V2rayNG
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod +x gradlew
+        echo "=== Building APK ==="
+        echo "App Name: ${{ inputs.app_name }}"
+        echo "Package: ${{ inputs.package_name }}"
+        ./gradlew assembleFdroidDebug --stacktrace || ./gradlew assembleDebug --stacktrace
+
+    - name: Prepare APKs
+      if: always()
+      run: |
+        find . -name "*.apk" -type f | head -n 20
+        mkdir -p artifacts
+        find . -name "*.apk" -type f -exec cp -v {} artifacts/ \; 2>/dev/null || true
+        ls -lh artifacts/
+        cd artifacts
+        APP_NAME="${{ inputs.app_name }}"
+        if [ -z "$APP_NAME" ]; then APP_NAME="EasyVPN"; fi
+        # Clean app name for filename
+        SAFE_NAME=$(echo "$APP_NAME" | tr ' ' '-' | tr -d '/')
+        for f in *.apk; do
+          [ -f "$f" ] && [[ "$f" != $SAFE_NAME-* ]] && mv "$f" "$SAFE_NAME-$f" 2>/dev/null || true
+        done
+        ls -lh
+
+    - name: Upload APK Artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: EasyVPN-APKs
+        path: artifacts/
+        if-no-files-found: error
+
+    - name: Create Release (if tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/*.apk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
