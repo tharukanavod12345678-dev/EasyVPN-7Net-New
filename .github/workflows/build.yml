@@ -160,6 +160,28 @@ jobs:
       run: |
         cd V2rayNG
         echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+          echo "gradle-wrapper.jar missing, restoring..."
+          mkdir -p gradle/wrapper
+          # Try to get wrapper jar from official gradle dist via wrapper properties version
+          VER=$(grep distributionUrl gradle/wrapper/gradle-wrapper.properties | sed -E 's/.*gradle-([0-9.]+)-.*/$1/' || echo "8.7")
+          echo "Gradle version from properties: $VER"
+          curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v${VER}.0/gradle/wrapper/gradle-wrapper.jar || true
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ] || [ $(stat -c%s gradle/wrapper/gradle-wrapper.jar 2>/dev/null || echo 0) -lt 1000 ]; then
+            echo "Fallback download wrapper jar..."
+            curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/master/gradle/wrapper/gradle-wrapper.jar || true
+          fi
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ] || [ $(stat -c%s gradle/wrapper/gradle-wrapper.jar 2>/dev/null || echo 0) -lt 1000 ]; then
+            echo "Trying services.gradle.org wrapper jar..."
+            curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-${VER}-bin.zip || curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+            unzip -p /tmp/gradle.zip gradle-${VER}/lib/plugins/gradle-wrapper-${VER}.jar > gradle/wrapper/gradle-wrapper.jar 2>/dev/null || true
+            # Alternative: extract any wrapper jar
+            if [ $(stat -c%s gradle/wrapper/gradle-wrapper.jar 2>/dev/null || echo 0) -lt 1000 ]; then
+              unzip -l /tmp/gradle.zip | grep wrapper
+              unzip -p /tmp/gradle.zip $(unzip -l /tmp/gradle.zip | grep wrapper | awk '{print $4}' | head -n 1) > gradle/wrapper/gradle-wrapper.jar || true
+            fi
+          fi
+        fi
         chmod +x gradlew
         ls -lh gradle/wrapper/ || true
         ls -lh app/libs/ || true
