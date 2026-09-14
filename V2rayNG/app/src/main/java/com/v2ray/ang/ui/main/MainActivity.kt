@@ -105,7 +105,7 @@ class MainActivity : HelperBaseComponentActivity() {
         BackHandler { moveTaskToBack(false) }
         MainScreen(
             mainViewModel = mainViewModel,
-            onAction = { action ->
+            onAction = { action: MainAction ->
                 when (action) {
                     MainAction.ToggleService -> handleFabAction()
                     MainAction.TestCurrentServer -> handleLayoutTestClick()
@@ -122,7 +122,7 @@ class MainActivity : HelperBaseComponentActivity() {
                     else -> mainViewModel.onAction(action)
                 }
             },
-            onNavigate = { route -> navigateTo(route) },
+            onNavigate = { route: MainDestination -> navigateTo(route) },
         )
     }
 

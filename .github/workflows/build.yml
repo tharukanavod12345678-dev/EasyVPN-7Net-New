@@ -62,11 +62,11 @@ jobs:
         [ -f "$GRADLE_FILE" ] && sed -i "s/applicationId = \"com.v2ray.ang\"/applicationId = \"$PACKAGE_NAME\"/g" "$GRADLE_FILE" || true
         find . -name "strings.xml" | while read f; do grep -q "app_name" "$f" && sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" "$f" || true; done
 
-    - name: Apply 7net Dark Theme & UI
+    - name: Apply 7net Dark Theme & UI (Drawables Only - MainScreen fix pending)
       run: |
-        if [ -f "easyvpn-patches/MainScreen_7net.kt" ]; then
-          cp easyvpn-patches/MainScreen_7net.kt V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainScreen.kt || true
-        fi
+        # NOTE: Custom MainScreen_7net.kt currently disabled for build stability
+        # It had conflicting overloads and outdated ProfileItem APIs (guid, remarks, profiles)
+        # Keeping official MainScreen.kt for now, only applying 7net drawables for future use
         mkdir -p V2rayNG/app/src/main/res/drawable
         cat > V2rayNG/app/src/main/res/drawable/easyvpn_circle_outer.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
@@ -76,6 +76,9 @@ jobs:
         <?xml version="1.0" encoding="utf-8"?>
         <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#332563EB" /><stroke android:width="1dp" android:color="#4D3B82F6" /></shape>
         EOF
+        # Optional: Apply dark theme colors via colors.xml override if exists
+        echo "7net drawables created, skipping MainScreen custom UI for stable build"
+        ls -lh V2rayNG/app/src/main/res/drawable/ | grep easyvpn || true
 
     - name: Apply Auto-Update Mechanism
       run: |

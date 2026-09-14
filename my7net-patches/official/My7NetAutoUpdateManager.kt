@@ -2,6 +2,7 @@ package com.v2ray.ang.util
 
 import android.content.Context
 import android.util.Log
+import com.v2ray.ang.extension.toast
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.MmkvManager
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +25,7 @@ object My7NetAutoUpdateManager {
     fun getConfigUrl(): String = MmkvManager.decodeSettingsString(KEY_CONFIG_URL, DEFAULT_CONFIG_URL) ?: DEFAULT_CONFIG_URL
     fun setConfigUrl(url: String) = MmkvManager.encodeSettings(KEY_CONFIG_URL, url)
     fun isAutoUpdateEnabled(): Boolean = MmkvManager.decodeSettingsBool(KEY_AUTO_UPDATE_ENABLED, true)
+    fun setAutoUpdateEnabled(enabled: Boolean) = MmkvManager.encodeSettings(KEY_AUTO_UPDATE_ENABLED, enabled)
     fun getLastUpdateTime(): Long = MmkvManager.decodeSettingsLong(KEY_LAST_UPDATE, 0L)
     fun setLastUpdateTime(time: Long = System.currentTimeMillis()) = MmkvManager.encodeSettings(KEY_LAST_UPDATE, time)
 
@@ -35,16 +37,10 @@ object My7NetAutoUpdateManager {
     }
 
     fun autoUpdateOnAppStart(context: Context) {
-        if (!isAutoUpdateEnabled()) {
-            Log.i(TAG, "Auto-update disabled")
-            return
-        }
+        if (!isAutoUpdateEnabled()) return
         val lastUpdate = getLastUpdateTime()
         val now = System.currentTimeMillis()
-        if (now - lastUpdate < 3600000 && lastUpdate != 0L) {
-            Log.i(TAG, "Skipping auto-update, recent")
-            return
-        }
+        if (now - lastUpdate < 3600000 && lastUpdate != 0L) return
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val result = fetchConfigsFromServer()
@@ -56,15 +52,16 @@ object My7NetAutoUpdateManager {
                                 var imported = 0
                                 for (config in configs) {
                                     try {
-                                        val count = AngConfigManager.importBatchConfig(config, "", false)
-                                        if (count != null && count > 0) imported += count else imported++
+                                        val pair = AngConfigManager.importBatchConfig(config, "", false)
+                                        val count = pair.first
+                                        if (count > 0) imported += count
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Import failed: ${e.message}")
                                     }
                                 }
                                 setLastUpdateTime()
                                 Log.i(TAG, "My7Net: Auto-updated $imported servers")
-                                Utils.showToastShort(context, "My7Net: Updated $imported servers")
+                                try { context.toast("My7Net: Updated $imported servers") } catch (_: Exception) {}
                             } catch (e: Exception) {
                                 Log.e(TAG, "Apply failed: ${e.message}")
                             }
@@ -96,8 +93,7 @@ object My7NetAutoUpdateManager {
                     }
                     trimmed.startsWith("{") -> {
                         val obj = JSONObject(trimmed)
-                        val keys = listOf("servers", "configs", "data", "list")
-                        for (key in keys) {
+                        for (key in listOf("servers", "configs", "data", "list")) {
                             if (obj.has(key)) {
                                 val arr = obj.optJSONArray(key)
                                 if (arr != null) {
@@ -111,11 +107,11 @@ object My7NetAutoUpdateManager {
                         }
                     }
                     else -> {
-                        trimmed.lines().forEach { line -> if (line.contains("://")) configs.add(line.trim()) }
+                        trimmed.lines().forEach { if (it.trim().contains("://")) configs.add(it.trim()) }
                     }
                 }
-            } catch (e: Exception) {
-                trimmed.lines().forEach { line -> if (line.contains("://")) configs.add(line.trim()) }
+            } catch (_: Exception) {
+                trimmed.lines().forEach { if (it.trim().contains("://")) configs.add(it.trim()) }
             }
             Result.success(configs)
         } catch (e: Exception) {

@@ -2,6 +2,7 @@ package com.v2ray.ang.util
 
 import android.content.Context
 import android.util.Log
+import com.v2ray.ang.extension.toast
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.MmkvManager
 import kotlinx.coroutines.CoroutineScope
@@ -17,7 +18,6 @@ import java.util.concurrent.TimeUnit
 /**
  * Easy VPN - Auto Update Manager
  * App open වෙනකොටම background thread එකෙන් server configs auto-download කරනවා
- * https://gist.githubusercontent.com/tharukanavod12345678-dev/938e791af1a182faa9ac1a0fc0dd2048/raw/300f244d3e298aa169c20b5b9f345bfd770de102/configs.json
  */
 object EasyVpnAutoUpdateManager {
     private const val TAG = "EasyVPN"
@@ -40,16 +40,11 @@ object EasyVpnAutoUpdateManager {
             .build()
     }
 
-    /**
-     * App open වෙනකොට auto-update කරන main function
-     * Background thread එකෙන් run වෙනවා, UI block වෙන්නේ නෑ
-     */
     fun autoUpdateOnAppStart(context: Context) {
         if (!isAutoUpdateEnabled()) {
             Log.i(TAG, "Auto-update disabled")
             return
         }
-        // Throttle: 1 hour
         val lastUpdate = getLastUpdateTime()
         val now = System.currentTimeMillis()
         if (now - lastUpdate < 3600000 && lastUpdate != 0L) {
@@ -69,17 +64,19 @@ object EasyVpnAutoUpdateManager {
                                 var imported = 0
                                 for (config in configs) {
                                     try {
-                                        // Import via AngConfigManager
-                                        val count = AngConfigManager.importBatchConfig(config, "", false)
-                                        if (count != null && count > 0) imported += count
-                                        else if (count == null) imported++ // Fallback
+                                        val pair = AngConfigManager.importBatchConfig(config, "", false)
+                                        // pair is Pair<Int,Int> -> first is count
+                                        val count = pair.first
+                                        if (count > 0) imported += count
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Import failed: ${e.message}")
                                     }
                                 }
                                 setLastUpdateTime()
                                 Log.i(TAG, "Easy VPN: Auto-updated $imported servers from ${configs.size} configs")
-                                Utils.showToastShort(context, "Easy VPN: Updated $imported servers")
+                                try {
+                                    context.toast("Easy VPN: Updated $imported servers")
+                                } catch (_: Exception) {}
                             } catch (e: Exception) {
                                 Log.e(TAG, "Apply failed: ${e.message}")
                             }
@@ -116,7 +113,6 @@ object EasyVpnAutoUpdateManager {
             try {
                 when {
                     trimmed.startsWith("[") -> {
-                        // JSON Array: ["vless://...", "vmess://..."]
                         val jsonArray = JSONArray(trimmed)
                         for (i in 0 until jsonArray.length()) {
                             val item = jsonArray.get(i)
@@ -133,7 +129,6 @@ object EasyVpnAutoUpdateManager {
                         }
                     }
                     trimmed.startsWith("{") -> {
-                        // JSON Object: {"servers": [...]}
                         val jsonObj = JSONObject(trimmed)
                         val possibleKeys = listOf("servers", "configs", "data", "list", "items", "proxies", "v2ray")
                         var found = false
@@ -161,7 +156,6 @@ object EasyVpnAutoUpdateManager {
                             }
                         }
                         if (!found) {
-                            // Try to extract all links from raw JSON string
                             trimmed.split("\"").forEach { part ->
                                 if (part.contains("://") && (part.startsWith("vless://") || part.startsWith("vmess://") || part.startsWith("trojan://") || part.startsWith("ss://"))) {
                                     configs.add(part)
@@ -170,7 +164,6 @@ object EasyVpnAutoUpdateManager {
                         }
                     }
                     else -> {
-                        // Plain text, one per line
                         trimmed.lines().forEach { line ->
                             val l = line.trim()
                             if (l.contains("://")) configs.add(l)
@@ -179,7 +172,6 @@ object EasyVpnAutoUpdateManager {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "JSON parse error, trying plain text: ${e.message}")
-                // Fallback plain text
                 trimmed.lines().forEach { line ->
                     val l = line.trim()
                     if (l.contains("://")) configs.add(l)
