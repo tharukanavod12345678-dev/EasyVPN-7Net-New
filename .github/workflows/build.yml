@@ -106,8 +106,38 @@ jobs:
 
     - name: Build libhevtun
       run: |
-        cd V2rayNG
-        if [ -f compile-hevtun.sh ]; then bash compile-hevtun.sh || true; mkdir -p app/libs/; cp -r libs/* app/libs/ 2>/dev/null || true; ls -lh app/libs/ | head -n 10; fi
+        echo "NDK_HOME=$NDK_HOME"
+        echo "Building hev-socks5-tunnel..."
+        ls -ld hev-socks5-tunnel || echo "hev-socks5-tunnel missing at root, checking V2rayNG"
+        ls -ld V2rayNG/hev-socks5-tunnel || true
+        # Ensure hev-socks5-tunnel exists at root for compile-hevtun.sh
+        if [ ! -d hev-socks5-tunnel ] && [ -d V2rayNG/hev-socks5-tunnel ]; then
+          cp -r V2rayNG/hev-socks5-tunnel hev-socks5-tunnel || true
+        fi
+        if [ ! -d hev-socks5-tunnel ]; then
+          echo "Cloning hev-socks5-tunnel to root..."
+          rm -rf hev-socks5-tunnel
+          git clone https://github.com/heiher/hev-socks5-tunnel.git hev-socks5-tunnel --depth 1 --recursive
+          cd hev-socks5-tunnel && git submodule update --init --recursive || true; cd ..
+        fi
+        ls -lh hev-socks5-tunnel/ | head -n 20
+        # Build using official method - script in root
+        if [ -f compile-hevtun.sh ]; then
+          bash compile-hevtun.sh
+        elif [ -f V2rayNG/compile-hevtun.sh ]; then
+          # Fallback if script in V2rayNG
+          cp V2rayNG/compile-hevtun.sh ./compile-hevtun.sh
+          bash compile-hevtun.sh
+        else
+          echo "compile-hevtun.sh not found!"
+          find . -name "compile-hevtun.sh"
+        fi
+        echo "=== Built libs ==="
+        ls -R libs/ | head -n 50
+        echo "=== Copying to V2rayNG/app/libs ==="
+        mkdir -p V2rayNG/app/libs
+        cp -r libs/* V2rayNG/app/libs/ 2>/dev/null || cp -r libs V2rayNG/app/ || true
+        ls -R V2rayNG/app/libs/ | head -n 100
 
     - name: Fetch Xray Core Tag
       run: |
