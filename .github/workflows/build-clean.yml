@@ -1,0 +1,139 @@
+name: Build Easy VPN Clean (Vanilla)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'App Name'
+        required: false
+        default: 'Easy VPN'
+        type: string
+      package_name:
+        description: 'Package Name'
+        required: false
+        default: 'com.easy.vpn'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout with submodules
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+        fetch-depth: 0
+
+    - name: Submodule sync
+      run: |
+        git submodule sync
+        git submodule update --init --recursive
+        git submodule status
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;29.0.14206865"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+
+    - name: Build libhevtun (official method)
+      run: |
+        ls -ld hev-socks5-tunnel || echo "hev missing, will clone"
+        if [ ! -d hev-socks5-tunnel ]; then
+          git clone https://github.com/heiher/hev-socks5-tunnel.git hev-socks5-tunnel --depth 1 --recursive
+          cd hev-socks5-tunnel && git submodule update --init --recursive; cd ..
+        fi
+        bash compile-hevtun.sh
+        ls -R libs/ | head -n 100
+        mkdir -p V2rayNG/app/libs
+        cp -r libs/* V2rayNG/app/libs/ || cp -r libs V2rayNG/app/
+        ls -R V2rayNG/app/libs/ | head -n 100
+
+    - name: Fetch Xray tag
+      run: |
+        cd V2rayNG
+        if [ -d AndroidLibXrayLite ]; then
+          pushd AndroidLibXrayLite
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v26.9.9")
+          echo "CURRENT_TAG=$TAG" >> $GITHUB_ENV
+          popd
+        else
+          echo "CURRENT_TAG=v26.9.9" >> $GITHUB_ENV
+        fi
+
+    - name: Download libv2ray
+      uses: robinraju/release-downloader@v1.11
+      with:
+        repository: '2dust/AndroidLibXrayLite'
+        tag: ${{ env.CURRENT_TAG }}
+        fileName: 'libv2ray.aar'
+        out-file-path: V2rayNG/app/libs/
+
+    - name: Download fallback
+      if: always()
+      run: |
+        SIZE=$(stat -c%s V2rayNG/app/libs/libv2ray.aar 2>/dev/null || echo 0)
+        echo "Size $SIZE"
+        if [ "$SIZE" -lt 1000000 ]; then
+          rm -f V2rayNG/app/libs/libv2ray.aar
+          for TAG in "v26.9.9" "v26.8.20" "v26.7.31"; do
+            curl -L -o V2rayNG/app/libs/libv2ray.aar "https://github.com/2dust/AndroidLibXrayLite/releases/download/$TAG/libv2ray.aar" || true
+            SIZE=$(stat -c%s V2rayNG/app/libs/libv2ray.aar 2>/dev/null || echo 0)
+            if [ "$SIZE" -gt 1000000 ]; then break; fi
+          done
+        fi
+        ls -lh V2rayNG/app/libs/
+
+    - name: Setup Java 21
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Rebrand Only (no extra patches)
+      run: |
+        APP_NAME="${{ inputs.app_name }}"
+        PKG="${{ inputs.package_name }}"
+        if [ -z "$APP_NAME" ]; then APP_NAME="Easy VPN"; fi
+        if [ -z "$PKG" ]; then PKG="com.easy.vpn"; fi
+        echo "Rebranding to $APP_NAME / $PKG"
+        GRADLE_FILE="V2rayNG/app/build.gradle.kts"
+        sed -i "s/applicationId = \"com.v2ray.ang\"/applicationId = \"$PKG\"/g" "$GRADLE_FILE" || true
+        find V2rayNG -name "strings.xml" | while read f; do
+          if grep -q "app_name" "$f"; then
+            sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" "$f" || true
+          fi
+        done
+        echo "Rebrand done"
+        grep applicationId "$GRADLE_FILE" | head
+
+    - name: Build APK
+      run: |
+        cd V2rayNG
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod +x gradlew
+        ls -lh gradle/wrapper/
+        ls -lh app/libs/
+        ./gradlew assembleFdroidDebug --stacktrace
+
+    - name: Prepare
+      if: always()
+      run: |
+        find . -name "*.apk" -type f | head
+        mkdir -p artifacts
+        find . -name "*.apk" -type f -exec cp {} artifacts/ \; || true
+        ls -lh artifacts/
+
+    - name: Upload
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: EasyVPN-Clean-APKs
+        path: artifacts/
